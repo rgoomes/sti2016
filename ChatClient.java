@@ -1,6 +1,13 @@
 import java.net.*;
 import java.io.*;
 
+import javax.crypto.*;
+import java.security.*;
+import java.security.spec.*;
+import javax.crypto.spec.*;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.X509EncodedKeySpec;
+
 class ChatClientThread extends Thread{
 	private Socket           socket   = null;
 	private ChatClient       client   = null;
@@ -32,10 +39,37 @@ class ChatClientThread extends Thread{
 		}
 	}
 
+	public byte[] decrypt(byte[] msg, SecretKey symKey){
+		try {
+			Cipher cipher = Cipher.getInstance("AES");
+			cipher.init(Cipher.DECRYPT_MODE, symKey);
+			return cipher.doFinal(msg);
+		} catch (Exception e){
+			System.out.println("decrypt() " + e.getMessage());
+		}
+
+		return null;
+	}
+
+	public int modulo16(int bytes){
+		return bytes + 16 - bytes % 16;
+	}
+
 	public void run(){
+		Boolean readSymKey = false;
+
 		while(true){
 			try{
-				client.handle(streamIn.readUTF());
+				int bytes = streamIn.readInt();
+				byte[] msg = new byte[bytes];
+				streamIn.read(msg);
+
+				if(!readSymKey){
+					readSymKey = true;
+					client.setSymKey(msg);
+				} else
+					client.handle(decrypt(msg, client.getSymKey()));
+
 			} catch(IOException ioe) {
 				System.out.println("Listening error: " + ioe.getMessage());
 				client.stop();
@@ -51,8 +85,39 @@ public class ChatClient implements Runnable{
 	private DataOutputStream streamOut = null;
 	private ChatClientThread client    = null;
 
+	private PublicKey publicKey = null;
+	private PrivateKey privateKey = null;
+	private SecretKey symKey = null;
+
+	public void setSymKey(byte[] encryptedSecret){
+		// decrypt secret key using private key
+		try {
+			Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+			cipher.init(Cipher.DECRYPT_MODE, privateKey);
+			symKey = new SecretKeySpec(cipher.doFinal(encryptedSecret), "AES");
+		} catch(Exception e){
+			System.out.println("setSymKey() " + e.getMessage());
+		}
+	}
+
+	public SecretKey getSymKey(){
+		return symKey;
+	}
+
 	public ChatClient(String serverName, int serverPort){
 		System.out.println("Establishing connection to server...");
+
+		// generate client's key pair
+		try{
+			KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
+			kpg.initialize(2048);
+			KeyPair kp = kpg.generateKeyPair();
+
+			this.publicKey  = kp.getPublic();
+			this.privateKey = kp.getPrivate();
+		} catch(Exception e){
+			System.out.println(e);
+		}
 
 		try{
 			// Establishes connection with server (name and port)
@@ -67,12 +132,29 @@ public class ChatClient implements Runnable{
 			System.out.println("Error establishing connection - unexpected exception: " + ioexception.getMessage());
 		}
 	}
+
 	public void run(){
+		// send public key to get symmetric key
+		try {
+			streamOut.writeInt(publicKey.getEncoded().length);
+			streamOut.write(publicKey.getEncoded());
+			streamOut.flush();
+		} catch(Exception e){
+			System.out.println("run() " + e.getMessage());
+		}
+
 		while (thread != null){
 			try{
 				// Sends message from console to server
-				streamOut.writeUTF(console.readLine());
-				streamOut.flush();
+				String tmp = console.readLine();
+				byte[] msg = tmp.getBytes();
+
+				if(msg.length > 0){
+					streamOut.writeInt(msg.length);
+					streamOut.write(msg);
+					streamOut.flush();
+				}
+
 			} catch(IOException ioexception) {
 				System.out.println("Error sending string to server: " + ioexception.getMessage());
 				stop();
@@ -80,15 +162,17 @@ public class ChatClient implements Runnable{
 		}
 	}
 
-	public void handle(String msg){
+	public void handle(byte[] msg){
+		String from_msg = new String(msg);
+
 		// Receives message from server
-		if(msg.equals(".quit")){
+		if(from_msg.equals(".quit")){
 			// Leaving, quit command
-			System.out.println("Exiting...Please press RETURN to exit ...");
+			System.out.println("Exiting... Please press RETURN to exit ...");
 			stop();
 		} else
 			// else, writes message received from server to console
-			System.out.println(msg);
+			System.out.println(from_msg);
 	}
 
 	// Inits new client thread

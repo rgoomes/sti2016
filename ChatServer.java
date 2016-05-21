@@ -1,12 +1,51 @@
 import java.net.*;
 import java.io.*;
 
+import javax.crypto.*;
+import java.security.*;
+import java.security.spec.*;
+import javax.crypto.spec.*;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.X509EncodedKeySpec;
+
 class ChatServerThread extends Thread {
 	private ChatServer       server    = null;
 	private Socket           socket    = null;
 	private DataInputStream  streamIn  = null;
 	private DataOutputStream streamOut = null;
 	private int              ID        = -1;
+
+	private PublicKey publicKey = null;
+	private SecretKey symKey = null;
+
+	public void genSecretKey(){
+		// generate client's session key
+		try {
+			KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+			keyGen.init(128);
+			symKey = keyGen.generateKey();
+		} catch(Exception e){
+			System.out.println("genSecretKey() " + e.getMessage());
+		}
+	}
+
+	public SecretKey getSecretKey(){
+		return symKey;
+	}
+
+	public void setPublicKey(byte[] bytes){
+		try {
+			this.publicKey = KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(bytes));
+		} catch(Exception e){
+			System.out.println("setPublicKey() " + e.getMessage());
+		}
+
+		this.genSecretKey();
+	}
+
+	public PublicKey getPublicKey(){
+		return publicKey;
+	}
 
 	public ChatServerThread(ChatServer _server, Socket _socket){
 		super();
@@ -16,9 +55,10 @@ class ChatServerThread extends Thread {
 	}
 
 	// Sends message to client
-	public void send(String msg){
+	public void send(byte[] msg){
 		try {
-			streamOut.writeUTF(msg);
+			streamOut.writeInt(msg.length);
+			streamOut.write(msg);
 			streamOut.flush();
 		} catch(IOException ioexception) {
 			System.out.println(ID + " ERROR sending message: " + ioexception.getMessage());
@@ -35,10 +75,21 @@ class ChatServerThread extends Thread {
 	// Runs thread
 	public void run(){
 		System.out.println("Server Thread " + ID + " running.");
+		Boolean readPublicKey = false;
 
 		while(true){
 			try {
-				server.handle(ID, streamIn.readUTF());
+				int bytes = streamIn.readInt();
+				byte[] msg = new byte[bytes];
+				streamIn.read(msg);
+
+				if(!readPublicKey){
+					readPublicKey = true;
+					this.setPublicKey(msg);
+					server.handle(ID, "".getBytes(), true);
+				} else
+					server.handle(ID, msg, false);
+
 			} catch(IOException ioe) {
 				System.out.println(ID + " ERROR reading: " + ioe.getMessage());
 				server.remove(ID);
@@ -120,21 +171,43 @@ public class ChatServer implements Runnable {
 		return -1;
 	}
 
-	public synchronized void handle(int ID, String input){
-		if(input.equals(".quit")){
-			int leaving_id = findClient(ID);
+	public byte[] encrypt(byte[] msg, Key symKey, String algorithm){
+		try {
+			// System.out.println(symKey.toString());
+			Cipher cipher = Cipher.getInstance(algorithm);
+			cipher.init(Cipher.ENCRYPT_MODE, symKey);
+			return cipher.doFinal(msg);
+		} catch (Exception e){
+			System.out.println("encrypt() " + e.getMessage());
+		}
+
+		return null;
+	}
+
+	public synchronized void handle(int ID, byte[] input, Boolean isSecretKey){
+		String msg = new String(input);
+		int client = findClient(ID);
+
+		PublicKey pk = clients[client].getPublicKey();
+		SecretKey sk = clients[client].getSecretKey();
+
+		if(isSecretKey == true){
+			// send secret key encrypted with client's public key to the client
+			clients[client].send(encrypt(sk.getEncoded(), pk, "RSA/ECB/PKCS1Padding"));
+		} else if(msg.equals(".quit")){
 			// Client exits
-			clients[leaving_id].send(".quit");
+			clients[client].send(encrypt(".quit".getBytes(), sk, "AES"));
+
 			// Notify remaing users
 			for(int i = 0; i < clientCount; i++)
-				if(i!=leaving_id)
-					clients[i].send("Client " +ID + " exits..");
+				if(i != client)
+					clients[i].send(encrypt(("Client " + ID + " exits..").getBytes(), clients[i].getSecretKey(), "AES"));
 
 			remove(ID);
 		} else
 			// Brodcast message for every other client online
 			for(int i = 0; i < clientCount; i++)
-				clients[i].send(ID + ": " + input);
+				clients[i].send(encrypt((ID + ": " + msg).getBytes(), clients[i].getSecretKey(), "AES"));
 	}
 
 	public synchronized void remove(int ID){
