@@ -100,7 +100,6 @@ class ChatServerThread extends Thread {
 
 					server.handle(ID, msg, signature, false);
 				}
-
 			} catch(IOException ioe) {
 				System.out.println(ID + " ERROR reading: " + ioe.getMessage());
 				server.remove(ID);

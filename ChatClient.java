@@ -6,10 +6,7 @@ import java.util.concurrent.*;
 
 import javax.crypto.*;
 import java.security.*;
-import java.security.spec.*;
 import javax.crypto.spec.*;
-import java.security.spec.PKCS8EncodedKeySpec;
-import java.security.spec.X509EncodedKeySpec;
 
 class ChatClientThread extends Thread{
 	private Socket           socket     = null;
@@ -79,6 +76,7 @@ class KeyManager extends Thread {
 		this.client = client;
 	}
 
+	// renew the key periodically
 	public void run() {
 		while(true){
 			try {
@@ -121,7 +119,7 @@ public class ChatClient implements Runnable{
 			keyManager = new KeyManager(this);
 			keyManager.start();
 		} catch(Exception e){
-			System.out.println("ChatClient/run() " + e.getMessage());
+			System.out.println("ChatClient/ChatClient() " + e.getMessage());
 		}
 
 		// generate client's key pair
@@ -133,7 +131,7 @@ public class ChatClient implements Runnable{
 			this.publicKey  = kp.getPublic();
 			this.privateKey = kp.getPrivate();
 		} catch(Exception e){
-			System.out.println(e);
+			System.out.println("ChatClient/ChatClient() " + e.getMessage());
 		}
 
 		try{
@@ -164,7 +162,7 @@ public class ChatClient implements Runnable{
 			streamOut.write(publicKey.getEncoded());
 			streamOut.flush();
 		} catch (Exception e){
-			System.out.println("ChatClient/run() " + e.getMessage());
+			System.out.println("ChatClient/requestNewKey() " + e.getMessage());
 		}
 	}
 
