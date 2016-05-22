@@ -2,6 +2,8 @@ import javax.crypto.*;
 import java.security.*;
 
 class Util {
+	static int PUBLIC = 0;
+	static int NORMAL = 1;
 
 	public static byte[] encrypt(byte[] msg, Key key, String algorithm){
 		try {
@@ -12,7 +14,7 @@ class Util {
 			System.out.println("encrypt() " + e.getMessage());
 		}
 
-		return null;
+		return new byte[0];
 	}
 
 	public static byte[] decrypt(byte[] msg, Key key, String algorithm){
@@ -24,7 +26,7 @@ class Util {
 			System.out.println("decrypt() " + e.getMessage());
 		}
 
-		return null;
+		return new byte[0];
 	}
 
 	public static byte[] hash(byte[] msg) {
@@ -35,7 +37,7 @@ class Util {
 			System.out.println("hash() " + e.getMessage());
 		}
 
-		return null;
+		return new byte[0];
 	}
 
 	// for print purposes

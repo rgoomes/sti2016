@@ -27,7 +27,7 @@ class ChatServerThread extends Thread {
 			keyGen.init(256);
 			symKey = keyGen.generateKey();
 		} catch(Exception e){
-			System.out.println("genSecretKey() " + e.getMessage());
+			System.out.println("ChatServerThread/genSecretKey() " + e.getMessage());
 		}
 	}
 
@@ -39,7 +39,7 @@ class ChatServerThread extends Thread {
 		try {
 			this.publicKey = KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(bytes));
 		} catch(Exception e){
-			System.out.println("setPublicKey() " + e.getMessage());
+			System.out.println("ChatServerThread/setPublicKey() " + e.getMessage());
 		}
 
 		this.genSecretKey();
@@ -57,8 +57,9 @@ class ChatServerThread extends Thread {
 	}
 
 	// Sends message to client
-	public void send(byte[] msg){
+	public void send(byte[] msg, int type){
 		try {
+			streamOut.writeInt(type);
 			streamOut.writeInt(msg.length);
 			streamOut.write(msg);
 			streamOut.flush();
@@ -81,16 +82,18 @@ class ChatServerThread extends Thread {
 
 		while(true){
 			try {
+				int type = streamIn.readInt();
 				int bytes = streamIn.readInt();
 				byte[] msg = new byte[bytes];
 				streamIn.read(msg);
 
-				if(!readPublicKey){
+				if(type == Util.PUBLIC){
 					readPublicKey = true;
 					this.setPublicKey(msg);
 					server.handle(ID, new byte[0], new byte[0], true);
-				} else {
+				} else if(readPublicKey){
 					// read also hash to compare signatures
+					type = streamIn.readInt();
 					bytes = streamIn.readInt();
 					byte[] signature = new byte[bytes];
 					streamIn.read(signature);
@@ -187,7 +190,7 @@ public class ChatServer implements Runnable {
 
 		if(isHandshake == true){
 			// send secret key encrypted with client's public key to the client
-			clients[client].send(Util.encrypt(sk.getEncoded(), pk, "RSA/ECB/PKCS1Padding"));
+			clients[client].send(Util.encrypt(sk.getEncoded(), pk, "RSA/ECB/PKCS1Padding"), Util.PUBLIC);
 		} else {
 
 			if(!Arrays.equals(Util.decrypt(sign, sk, "AES"), Util.hash(Util.decrypt(input, sk, "AES")))){
@@ -198,16 +201,16 @@ public class ChatServer implements Runnable {
 			if(msg.equals(".quit")){
 				// Client exits
 				byte[] quit_msg = ".quit".getBytes();
-				clients[client].send(Util.encrypt(quit_msg, sk, "AES"));
-				clients[client].send(Util.encrypt(Util.hash(quit_msg), sk, "AES"));
+				clients[client].send(Util.encrypt(quit_msg, sk, "AES"), Util.NORMAL);
+				clients[client].send(Util.encrypt(Util.hash(quit_msg), sk, "AES"), Util.NORMAL);
 
 				// Notify remaing users
 				byte[] exit_msg = ("Client " + ID + " exits..").getBytes();
 
 				for(int i = 0; i < clientCount; i++){
 					if(i != client){
-						clients[i].send(Util.encrypt(exit_msg, clients[i].getSecretKey(), "AES"));
-						clients[i].send(Util.encrypt(Util.hash(exit_msg), clients[i].getSecretKey(), "AES"));
+						clients[i].send(Util.encrypt(exit_msg, clients[i].getSecretKey(), "AES"), Util.NORMAL);
+						clients[i].send(Util.encrypt(Util.hash(exit_msg), clients[i].getSecretKey(), "AES"), Util.NORMAL);
 					}
 				}
 
@@ -217,8 +220,8 @@ public class ChatServer implements Runnable {
 				byte[] new_msg = (ID + ": " + msg).getBytes();
 
 				for(int i = 0; i < clientCount; i++){
-					clients[i].send(Util.encrypt(new_msg, clients[i].getSecretKey(), "AES"));
-					clients[i].send(Util.encrypt(Util.hash(new_msg), clients[i].getSecretKey(), "AES"));
+					clients[i].send(Util.encrypt(new_msg, clients[i].getSecretKey(), "AES"), Util.NORMAL);
+					clients[i].send(Util.encrypt(Util.hash(new_msg), clients[i].getSecretKey(), "AES"), Util.NORMAL);
 				}
 			}
 		}

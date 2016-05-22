@@ -12,9 +12,10 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 
 class ChatClientThread extends Thread{
-	private Socket           socket   = null;
-	private ChatClient       client   = null;
-	private DataInputStream  streamIn = null;
+	private Socket           socket     = null;
+	private ChatClient       client     = null;
+	private DataInputStream  streamIn   = null;
+	public  Boolean          readSymKey = false;
 
 	public ChatClientThread(ChatClient _client, Socket _socket){
 		client = _client;
@@ -43,29 +44,48 @@ class ChatClientThread extends Thread{
 	}
 
 	public void run(){
-		Boolean readSymKey = false;
-
 		while(true){
 			try{
+				int type = streamIn.readInt();
 				int bytes = streamIn.readInt();
 				byte[] msg = new byte[bytes];
 				streamIn.read(msg);
 
-				if(!readSymKey){
+				if(type == Util.PUBLIC){
 					readSymKey = true;
 					client.setSymKey(msg);
 					client.symMutex.release();
-				} else {
+				} else if(readSymKey){
+					// read also hash to compare signatures
+					type = streamIn.readInt();
 					bytes = streamIn.readInt();
 					byte[] signature = new byte[bytes];
 					streamIn.read(signature);
 
 					client.handle(Util.decrypt(msg, client.getSymKey(), "AES"), signature);
 				}
-
 			} catch(IOException ioe) {
 				System.out.println("Listening error: " + ioe.getMessage());
 				client.stop();
+			}
+		}
+	}
+}
+
+class KeyManager extends Thread {
+	private ChatClient client = null;
+
+	public KeyManager(ChatClient client){
+		this.client = client;
+	}
+
+	public void run() {
+		while(true){
+			try {
+				Thread.sleep(60000);
+				client.requestNewKey();
+			} catch(Exception e){
+				System.out.println("KeyManager/run() " + e.getMessage());
 			}
 		}
 	}
@@ -77,6 +97,7 @@ public class ChatClient implements Runnable{
 	private DataInputStream  console   = null;
 	private DataOutputStream streamOut = null;
 	private ChatClientThread client    = null;
+	private KeyManager keyManager      = null;
 
 	private PublicKey publicKey = null;
 	private PrivateKey privateKey = null;
@@ -97,9 +118,10 @@ public class ChatClient implements Runnable{
 		System.out.println("Establishing connection to server...");
 
 		try {
-			symMutex.acquire();
-		} catch (Exception e){
-			System.out.println("run() " + e.getMessage());
+			keyManager = new KeyManager(this);
+			keyManager.start();
+		} catch(Exception e){
+			System.out.println("ChatClient/run() " + e.getMessage());
 		}
 
 		// generate client's key pair
@@ -128,42 +150,58 @@ public class ChatClient implements Runnable{
 		}
 	}
 
-	public void run(){
-		// send public key to get symmetric key
+	public void requestNewKey(){
 		try {
+			// needed to block sending messages with the old key
+			symMutex.acquire();
+			client.readSymKey = false;
+
+			// to know when its updating
+			Thread.sleep(1000);
+
+			streamOut.writeInt(Util.PUBLIC);
 			streamOut.writeInt(publicKey.getEncoded().length);
 			streamOut.write(publicKey.getEncoded());
 			streamOut.flush();
-		} catch(Exception e){
-			System.out.println("run() " + e.getMessage());
-		}
-
-		// wait for the symmetric to get set
-		try {
-			symMutex.acquire();
 		} catch (Exception e){
-			System.out.println("run() " + e.getMessage());
+			System.out.println("ChatClient/run() " + e.getMessage());
 		}
+	}
+
+	public void run(){
+		requestNewKey();
 
 		while (thread != null){
 			try{
 				// Sends message from console to server
 				String tmp = console.readLine();
-				byte[] bytes = tmp.getBytes();
-				byte[] msg = Util.encrypt(bytes, symKey, "AES");
 
-				if(tmp.length() > 0){
-					streamOut.writeInt(msg.length);
-					streamOut.write(msg);
-					streamOut.flush();
+				try {
+					// wait for server to send the symmetric key
+					symMutex.acquire();
 
-					// send hash for integrity checking
-					byte[] encryptedSign = Util.encrypt(Util.hash(bytes), symKey, "AES");
-					streamOut.writeInt(encryptedSign.length);
-					streamOut.write(encryptedSign);
-					streamOut.flush();
+					byte[] bytes = tmp.getBytes();
+					byte[] msg = Util.encrypt(bytes, symKey, "AES");
+
+					if(tmp.length() > 0 && msg.length > 0){
+						streamOut.writeInt(Util.NORMAL);
+						streamOut.writeInt(msg.length);
+						streamOut.write(msg);
+						streamOut.flush();
+
+						// send hash for integrity checking and authenticity
+						byte[] signature = Util.encrypt(Util.hash(bytes), symKey, "AES");
+
+						streamOut.writeInt(Util.NORMAL);
+						streamOut.writeInt(signature.length);
+						streamOut.write(signature);
+						streamOut.flush();
+					}
+
+					symMutex.release();
+				} catch(Exception e){
+					System.out.println("ChatClient/run() " + e.getMessage());
 				}
-
 			} catch(IOException ioexception) {
 				System.out.println("Error sending string to server: " + ioexception.getMessage());
 				stop();
@@ -184,7 +222,7 @@ public class ChatClient implements Runnable{
 			// Leaving, quit command
 			System.out.println("Exiting... Please press RETURN to exit ...");
 			stop();
-		} else
+		} else if(from_msg.length() > 0)
 			// else, writes message received from server to console
 			System.out.println(from_msg);
 	}
@@ -206,6 +244,11 @@ public class ChatClient implements Runnable{
 		if(thread != null){
 			thread.stop();
 			thread = null;
+		}
+
+		if(keyManager != null){
+			keyManager.stop();
+			keyManager = null;
 		}
 
 		try {
