@@ -42,55 +42,6 @@ class ChatClientThread extends Thread{
 		}
 	}
 
-	public byte[] decrypt(byte[] msg, Key key, String algorithm){
-		try {
-			Cipher cipher = Cipher.getInstance(algorithm);
-			cipher.init(Cipher.DECRYPT_MODE, key);
-			return cipher.doFinal(msg);
-		} catch (Exception e){
-			System.out.println("decrypt() " + e.getMessage());
-		}
-
-		return null;
-	}
-
-	public byte[] encrypt(byte[] msg, Key symKey, String algorithm){
-		try {
-			Cipher cipher = Cipher.getInstance(algorithm);
-			cipher.init(Cipher.ENCRYPT_MODE, symKey);
-			return cipher.doFinal(msg);
-		} catch (Exception e){
-			System.out.println("encrypt() " + e.getMessage());
-		}
-
-		return null;
-	}
-
-	public static byte[] hash(byte[] msg) {
-		try {
-			MessageDigest md = MessageDigest.getInstance("SHA-1");
-			return md.digest(msg);
-		} catch (Exception e) {
-			System.out.println("hash() " + e.getMessage());
-		}
-
-		return null;
-	}
-
-	// for print purposes
-	public static String byteArrayToHexString(byte[] b) {
-		String result = "";
-
-		for(int i = 0; i < b.length; i++)
-			result += Integer.toString((b[i] & 0xff ) + 0x100, 16).substring(1);
-
-		return result;
-	}
-
-	public int modulo16(int bytes){
-		return bytes + 16 - bytes % 16;
-	}
-
 	public void run(){
 		Boolean readSymKey = false;
 
@@ -109,7 +60,7 @@ class ChatClientThread extends Thread{
 					byte[] signature = new byte[bytes];
 					streamIn.read(signature);
 
-					client.handle(decrypt(msg, client.getSymKey(), "AES"), signature);
+					client.handle(Util.decrypt(msg, client.getSymKey(), "AES"), signature);
 				}
 
 			} catch(IOException ioe) {
@@ -135,7 +86,7 @@ public class ChatClient implements Runnable{
 
 	public void setSymKey(byte[] encryptedSecret){
 		// decrypt secret key using private key
-		symKey = new SecretKeySpec(client.decrypt(encryptedSecret, privateKey, "RSA/ECB/PKCS1Padding"), "AES");
+		symKey = new SecretKeySpec(Util.decrypt(encryptedSecret, privateKey, "RSA/ECB/PKCS1Padding"), "AES");
 	}
 
 	public SecretKey getSymKey(){
@@ -199,7 +150,7 @@ public class ChatClient implements Runnable{
 				// Sends message from console to server
 				String tmp = console.readLine();
 				byte[] bytes = tmp.getBytes();
-				byte[] msg = client.encrypt(bytes, symKey, "AES");
+				byte[] msg = Util.encrypt(bytes, symKey, "AES");
 
 				if(tmp.length() > 0){
 					streamOut.writeInt(msg.length);
@@ -207,7 +158,7 @@ public class ChatClient implements Runnable{
 					streamOut.flush();
 
 					// send hash for integrity checking
-					byte[] encryptedSign = client.encrypt(client.hash(bytes), symKey, "AES");
+					byte[] encryptedSign = Util.encrypt(Util.hash(bytes), symKey, "AES");
 					streamOut.writeInt(encryptedSign.length);
 					streamOut.write(encryptedSign);
 					streamOut.flush();
@@ -221,7 +172,7 @@ public class ChatClient implements Runnable{
 	}
 
 	public void handle(byte[] msg, byte[] sign){
-		if(!Arrays.equals(client.hash(msg), client.decrypt(sign, symKey, "AES"))){
+		if(!Arrays.equals(Util.hash(msg), Util.decrypt(sign, symKey, "AES"))){
 			System.out.println("error: hash not equal");
 			return;
 		}

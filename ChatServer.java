@@ -24,7 +24,7 @@ class ChatServerThread extends Thread {
 		// generate client's session key
 		try {
 			KeyGenerator keyGen = KeyGenerator.getInstance("AES");
-			keyGen.init(128);
+			keyGen.init(256);
 			symKey = keyGen.generateKey();
 		} catch(Exception e){
 			System.out.println("genSecretKey() " + e.getMessage());
@@ -179,63 +179,18 @@ public class ChatServer implements Runnable {
 		return -1;
 	}
 
-	public byte[] encrypt(byte[] msg, Key key, String algorithm){
-		try {
-			Cipher cipher = Cipher.getInstance(algorithm);
-			cipher.init(Cipher.ENCRYPT_MODE, key);
-			return cipher.doFinal(msg);
-		} catch (Exception e){
-			System.out.println("encrypt() " + e.getMessage());
-		}
-
-		return null;
-	}
-
-	public byte[] decrypt(byte[] msg, Key key, String algorithm){
-		try {
-			Cipher cipher = Cipher.getInstance(algorithm);
-			cipher.init(Cipher.DECRYPT_MODE, key);
-			return cipher.doFinal(msg);
-		} catch (Exception e){
-			System.out.println("decrypt() " + e.getMessage());
-		}
-
-		return null;
-	}
-
-	public static byte[] hash(byte[] msg) {
-		try {
-			MessageDigest md = MessageDigest.getInstance("SHA-1");
-			return md.digest(msg);
-		} catch (Exception e) {
-			System.out.println("hash() " + e.getMessage());
-		}
-
-		return null;
-	}
-
-	// for print purposes
-	public static String byteArrayToHexString(byte[] b) {
-		String result = "";
-
-		for(int i = 0; i < b.length; i++)
-			result += Integer.toString((b[i] & 0xff ) + 0x100, 16).substring(1);
-
-		return result;
-	}
-
-	public synchronized void handle(int ID, byte[] input, byte[] sign, Boolean isSecretKey){
+	public synchronized void handle(int ID, byte[] input, byte[] sign, Boolean isHandshake){
 		int client = findClient(ID);
 		PublicKey pk = clients[client].getPublicKey();
 		SecretKey sk = clients[client].getSecretKey();
-		String msg = new String(decrypt(input, sk, "AES"));
+		String msg = new String(Util.decrypt(input, sk, "AES"));
 
-		if(isSecretKey == true){
+		if(isHandshake == true){
 			// send secret key encrypted with client's public key to the client
-			clients[client].send(encrypt(sk.getEncoded(), pk, "RSA/ECB/PKCS1Padding"));
+			clients[client].send(Util.encrypt(sk.getEncoded(), pk, "RSA/ECB/PKCS1Padding"));
 		} else {
 
-			if(!Arrays.equals(decrypt(sign, sk, "AES"), hash(decrypt(input, sk, "AES")))){
+			if(!Arrays.equals(Util.decrypt(sign, sk, "AES"), Util.hash(Util.decrypt(input, sk, "AES")))){
 				System.out.println("error: hash not equal");
 				return;
 			}
@@ -243,26 +198,29 @@ public class ChatServer implements Runnable {
 			if(msg.equals(".quit")){
 				// Client exits
 				byte[] quit_msg = ".quit".getBytes();
-				clients[client].send(encrypt(quit_msg, sk, "AES"));
-				clients[client].send(encrypt(hash(quit_msg), sk, "AES"));
+				clients[client].send(Util.encrypt(quit_msg, sk, "AES"));
+				clients[client].send(Util.encrypt(Util.hash(quit_msg), sk, "AES"));
 
 				// Notify remaing users
+				byte[] exit_msg = ("Client " + ID + " exits..").getBytes();
+
 				for(int i = 0; i < clientCount; i++){
 					if(i != client){
-						byte[] exit_msg = ("Client " + ID + " exits..").getBytes();
-						clients[i].send(encrypt(exit_msg, clients[i].getSecretKey(), "AES"));
-						clients[i].send(encrypt(hash(exit_msg), clients[i].getSecretKey(), "AES"));
+						clients[i].send(Util.encrypt(exit_msg, clients[i].getSecretKey(), "AES"));
+						clients[i].send(Util.encrypt(Util.hash(exit_msg), clients[i].getSecretKey(), "AES"));
 					}
 				}
 
 				remove(ID);
-			} else
+			} else {
 				// Brodcast message for every client online
+				byte[] new_msg = (ID + ": " + msg).getBytes();
+
 				for(int i = 0; i < clientCount; i++){
-					byte[] new_msg = (ID + ": " + msg).getBytes();
-					clients[i].send(encrypt(new_msg, clients[i].getSecretKey(), "AES"));
-					clients[i].send(encrypt(hash(new_msg), clients[i].getSecretKey(), "AES"));
+					clients[i].send(Util.encrypt(new_msg, clients[i].getSecretKey(), "AES"));
+					clients[i].send(Util.encrypt(Util.hash(new_msg), clients[i].getSecretKey(), "AES"));
 				}
+			}
 		}
 	}
 
