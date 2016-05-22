@@ -39,10 +39,10 @@ class ChatClientThread extends Thread{
 		}
 	}
 
-	public byte[] decrypt(byte[] msg, SecretKey symKey){
+	public byte[] decrypt(byte[] msg, Key key, String algorithm){
 		try {
-			Cipher cipher = Cipher.getInstance("AES");
-			cipher.init(Cipher.DECRYPT_MODE, symKey);
+			Cipher cipher = Cipher.getInstance(algorithm);
+			cipher.init(Cipher.DECRYPT_MODE, key);
 			return cipher.doFinal(msg);
 		} catch (Exception e){
 			System.out.println("decrypt() " + e.getMessage());
@@ -68,7 +68,7 @@ class ChatClientThread extends Thread{
 					readSymKey = true;
 					client.setSymKey(msg);
 				} else
-					client.handle(decrypt(msg, client.getSymKey()));
+					client.handle(decrypt(msg, client.getSymKey(), "AES"));
 
 			} catch(IOException ioe) {
 				System.out.println("Listening error: " + ioe.getMessage());
@@ -91,13 +91,7 @@ public class ChatClient implements Runnable{
 
 	public void setSymKey(byte[] encryptedSecret){
 		// decrypt secret key using private key
-		try {
-			Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
-			cipher.init(Cipher.DECRYPT_MODE, privateKey);
-			symKey = new SecretKeySpec(cipher.doFinal(encryptedSecret), "AES");
-		} catch(Exception e){
-			System.out.println("setSymKey() " + e.getMessage());
-		}
+		symKey = new SecretKeySpec(client.decrypt(encryptedSecret, privateKey, "RSA/ECB/PKCS1Padding"), "AES");
 	}
 
 	public SecretKey getSymKey(){

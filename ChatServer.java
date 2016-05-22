@@ -86,7 +86,7 @@ class ChatServerThread extends Thread {
 				if(!readPublicKey){
 					readPublicKey = true;
 					this.setPublicKey(msg);
-					server.handle(ID, "".getBytes(), true);
+					server.handle(ID, new byte[0], true);
 				} else
 					server.handle(ID, msg, false);
 
@@ -173,7 +173,6 @@ public class ChatServer implements Runnable {
 
 	public byte[] encrypt(byte[] msg, Key symKey, String algorithm){
 		try {
-			// System.out.println(symKey.toString());
 			Cipher cipher = Cipher.getInstance(algorithm);
 			cipher.init(Cipher.ENCRYPT_MODE, symKey);
 			return cipher.doFinal(msg);
@@ -205,7 +204,7 @@ public class ChatServer implements Runnable {
 
 			remove(ID);
 		} else
-			// Brodcast message for every other client online
+			// Brodcast message for every client online
 			for(int i = 0; i < clientCount; i++)
 				clients[i].send(encrypt((ID + ": " + msg).getBytes(), clients[i].getSecretKey(), "AES"));
 	}
