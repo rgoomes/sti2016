@@ -1,6 +1,9 @@
 import java.net.*;
 import java.io.*;
 
+import java.util.*;
+import java.util.concurrent.*;
+
 import javax.crypto.*;
 import java.security.*;
 import java.security.spec.*;
@@ -51,6 +54,39 @@ class ChatClientThread extends Thread{
 		return null;
 	}
 
+	public byte[] encrypt(byte[] msg, Key symKey, String algorithm){
+		try {
+			Cipher cipher = Cipher.getInstance(algorithm);
+			cipher.init(Cipher.ENCRYPT_MODE, symKey);
+			return cipher.doFinal(msg);
+		} catch (Exception e){
+			System.out.println("encrypt() " + e.getMessage());
+		}
+
+		return null;
+	}
+
+	public static byte[] hash(byte[] msg) {
+		try {
+			MessageDigest md = MessageDigest.getInstance("SHA-1");
+			return md.digest(msg);
+		} catch (Exception e) {
+			System.out.println("hash() " + e.getMessage());
+		}
+
+		return null;
+	}
+
+	// for print purposes
+	public static String byteArrayToHexString(byte[] b) {
+		String result = "";
+
+		for(int i = 0; i < b.length; i++)
+			result += Integer.toString((b[i] & 0xff ) + 0x100, 16).substring(1);
+
+		return result;
+	}
+
 	public int modulo16(int bytes){
 		return bytes + 16 - bytes % 16;
 	}
@@ -67,8 +103,14 @@ class ChatClientThread extends Thread{
 				if(!readSymKey){
 					readSymKey = true;
 					client.setSymKey(msg);
-				} else
-					client.handle(decrypt(msg, client.getSymKey(), "AES"));
+					client.symMutex.release();
+				} else {
+					bytes = streamIn.readInt();
+					byte[] signature = new byte[bytes];
+					streamIn.read(signature);
+
+					client.handle(decrypt(msg, client.getSymKey(), "AES"), signature);
+				}
 
 			} catch(IOException ioe) {
 				System.out.println("Listening error: " + ioe.getMessage());
@@ -89,6 +131,8 @@ public class ChatClient implements Runnable{
 	private PrivateKey privateKey = null;
 	private SecretKey symKey = null;
 
+	public Semaphore symMutex = new Semaphore(1);
+
 	public void setSymKey(byte[] encryptedSecret){
 		// decrypt secret key using private key
 		symKey = new SecretKeySpec(client.decrypt(encryptedSecret, privateKey, "RSA/ECB/PKCS1Padding"), "AES");
@@ -100,6 +144,12 @@ public class ChatClient implements Runnable{
 
 	public ChatClient(String serverName, int serverPort){
 		System.out.println("Establishing connection to server...");
+
+		try {
+			symMutex.acquire();
+		} catch (Exception e){
+			System.out.println("run() " + e.getMessage());
+		}
 
 		// generate client's key pair
 		try{
@@ -137,15 +187,29 @@ public class ChatClient implements Runnable{
 			System.out.println("run() " + e.getMessage());
 		}
 
+		// wait for the symmetric to get set
+		try {
+			symMutex.acquire();
+		} catch (Exception e){
+			System.out.println("run() " + e.getMessage());
+		}
+
 		while (thread != null){
 			try{
 				// Sends message from console to server
 				String tmp = console.readLine();
-				byte[] msg = tmp.getBytes();
+				byte[] bytes = tmp.getBytes();
+				byte[] msg = client.encrypt(bytes, symKey, "AES");
 
-				if(msg.length > 0){
+				if(tmp.length() > 0){
 					streamOut.writeInt(msg.length);
 					streamOut.write(msg);
+					streamOut.flush();
+
+					// send hash for integrity checking
+					byte[] encryptedSign = client.encrypt(client.hash(bytes), symKey, "AES");
+					streamOut.writeInt(encryptedSign.length);
+					streamOut.write(encryptedSign);
 					streamOut.flush();
 				}
 
@@ -156,7 +220,12 @@ public class ChatClient implements Runnable{
 		}
 	}
 
-	public void handle(byte[] msg){
+	public void handle(byte[] msg, byte[] sign){
+		if(!Arrays.equals(client.hash(msg), client.decrypt(sign, symKey, "AES"))){
+			System.out.println("error: hash not equal");
+			return;
+		}
+
 		String from_msg = new String(msg);
 
 		// Receives message from server

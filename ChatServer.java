@@ -1,6 +1,8 @@
 import java.net.*;
 import java.io.*;
 
+import java.util.*;
+
 import javax.crypto.*;
 import java.security.*;
 import java.security.spec.*;
@@ -86,9 +88,15 @@ class ChatServerThread extends Thread {
 				if(!readPublicKey){
 					readPublicKey = true;
 					this.setPublicKey(msg);
-					server.handle(ID, new byte[0], true);
-				} else
-					server.handle(ID, msg, false);
+					server.handle(ID, new byte[0], new byte[0], true);
+				} else {
+					// read also hash to compare signatures
+					bytes = streamIn.readInt();
+					byte[] signature = new byte[bytes];
+					streamIn.read(signature);
+
+					server.handle(ID, msg, signature, false);
+				}
 
 			} catch(IOException ioe) {
 				System.out.println(ID + " ERROR reading: " + ioe.getMessage());
@@ -171,10 +179,10 @@ public class ChatServer implements Runnable {
 		return -1;
 	}
 
-	public byte[] encrypt(byte[] msg, Key symKey, String algorithm){
+	public byte[] encrypt(byte[] msg, Key key, String algorithm){
 		try {
 			Cipher cipher = Cipher.getInstance(algorithm);
-			cipher.init(Cipher.ENCRYPT_MODE, symKey);
+			cipher.init(Cipher.ENCRYPT_MODE, key);
 			return cipher.doFinal(msg);
 		} catch (Exception e){
 			System.out.println("encrypt() " + e.getMessage());
@@ -183,30 +191,79 @@ public class ChatServer implements Runnable {
 		return null;
 	}
 
-	public synchronized void handle(int ID, byte[] input, Boolean isSecretKey){
-		String msg = new String(input);
-		int client = findClient(ID);
+	public byte[] decrypt(byte[] msg, Key key, String algorithm){
+		try {
+			Cipher cipher = Cipher.getInstance(algorithm);
+			cipher.init(Cipher.DECRYPT_MODE, key);
+			return cipher.doFinal(msg);
+		} catch (Exception e){
+			System.out.println("decrypt() " + e.getMessage());
+		}
 
+		return null;
+	}
+
+	public static byte[] hash(byte[] msg) {
+		try {
+			MessageDigest md = MessageDigest.getInstance("SHA-1");
+			return md.digest(msg);
+		} catch (Exception e) {
+			System.out.println("hash() " + e.getMessage());
+		}
+
+		return null;
+	}
+
+	// for print purposes
+	public static String byteArrayToHexString(byte[] b) {
+		String result = "";
+
+		for(int i = 0; i < b.length; i++)
+			result += Integer.toString((b[i] & 0xff ) + 0x100, 16).substring(1);
+
+		return result;
+	}
+
+	public synchronized void handle(int ID, byte[] input, byte[] sign, Boolean isSecretKey){
+		int client = findClient(ID);
 		PublicKey pk = clients[client].getPublicKey();
 		SecretKey sk = clients[client].getSecretKey();
+		String msg = new String(decrypt(input, sk, "AES"));
 
 		if(isSecretKey == true){
 			// send secret key encrypted with client's public key to the client
 			clients[client].send(encrypt(sk.getEncoded(), pk, "RSA/ECB/PKCS1Padding"));
-		} else if(msg.equals(".quit")){
-			// Client exits
-			clients[client].send(encrypt(".quit".getBytes(), sk, "AES"));
+		} else {
 
-			// Notify remaing users
-			for(int i = 0; i < clientCount; i++)
-				if(i != client)
-					clients[i].send(encrypt(("Client " + ID + " exits..").getBytes(), clients[i].getSecretKey(), "AES"));
+			if(!Arrays.equals(decrypt(sign, sk, "AES"), hash(decrypt(input, sk, "AES")))){
+				System.out.println("error: hash not equal");
+				return;
+			}
 
-			remove(ID);
-		} else
-			// Brodcast message for every client online
-			for(int i = 0; i < clientCount; i++)
-				clients[i].send(encrypt((ID + ": " + msg).getBytes(), clients[i].getSecretKey(), "AES"));
+			if(msg.equals(".quit")){
+				// Client exits
+				byte[] quit_msg = ".quit".getBytes();
+				clients[client].send(encrypt(quit_msg, sk, "AES"));
+				clients[client].send(encrypt(hash(quit_msg), sk, "AES"));
+
+				// Notify remaing users
+				for(int i = 0; i < clientCount; i++){
+					if(i != client){
+						byte[] exit_msg = ("Client " + ID + " exits..").getBytes();
+						clients[i].send(encrypt(exit_msg, clients[i].getSecretKey(), "AES"));
+						clients[i].send(encrypt(hash(exit_msg), clients[i].getSecretKey(), "AES"));
+					}
+				}
+
+				remove(ID);
+			} else
+				// Brodcast message for every client online
+				for(int i = 0; i < clientCount; i++){
+					byte[] new_msg = (ID + ": " + msg).getBytes();
+					clients[i].send(encrypt(new_msg, clients[i].getSecretKey(), "AES"));
+					clients[i].send(encrypt(hash(new_msg), clients[i].getSecretKey(), "AES"));
+				}
+		}
 	}
 
 	public synchronized void remove(int ID){
