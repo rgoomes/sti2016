@@ -2,8 +2,9 @@ import javax.crypto.*;
 import java.security.*;
 
 class Util {
-	static int PUBLIC = 0;
+	static int SECRET = 0;
 	static int NORMAL = 1;
+	static int PUBLIC = 2;
 
 	public static byte[] encrypt(byte[] msg, Key key, String algorithm){
 		try {

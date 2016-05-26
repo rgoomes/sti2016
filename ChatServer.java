@@ -58,9 +58,13 @@ class ChatServerThread extends Thread {
 
 	// Sends message to client
 	public void send(byte[] msg, int type, Boolean doHash){
-		byte[] encrypted_msg = (type == Util.PUBLIC)
-			? Util.encrypt(msg, getPublicKey(), "RSA")
-			: Util.encrypt(msg, getSecretKey(), "AES");
+		byte[] encrypted_msg = null;
+
+		if(type == Util.PUBLIC)
+			encrypted_msg = msg;
+		else
+			encrypted_msg = (type == Util.SECRET)
+				? Util.encrypt(msg, getPublicKey(), "RSA") : Util.encrypt(msg, getSecretKey(), "AES");
 
 		try {
 			streamOut.writeInt(type);
@@ -92,6 +96,9 @@ class ChatServerThread extends Thread {
 		System.out.println("Server Thread " + ID + " running.");
 		Boolean readPublicKey = false;
 
+		// send server public key to client
+		this.send(server.getPublicKey().getEncoded(), Util.PUBLIC, false);
+
 		while(true){
 			try {
 				int type = streamIn.readInt();
@@ -99,7 +106,7 @@ class ChatServerThread extends Thread {
 				byte[] msg = new byte[bytes];
 				streamIn.read(msg);
 
-				if(type == Util.PUBLIC){
+				if(type == Util.SECRET){
 					readPublicKey = true;
 					this.setPublicKey(msg);
 					server.handle(ID, new byte[0], new byte[0], true);
@@ -145,6 +152,14 @@ public class ChatServer implements Runnable {
 
 	private PublicKey publicKey = null;
 	private PrivateKey privateKey = null;
+
+	public PublicKey getPublicKey(){
+		return publicKey;
+	}
+
+	public PrivateKey getPrivateKey(){
+		return privateKey;
+	}
 
 	public ChatServer(int port){
 		// generate server's key pair
@@ -214,7 +229,7 @@ public class ChatServer implements Runnable {
 
 		if(isHandshake == true)
 			// send secret key encrypted with client's public key to the client
-			clients[client].send(sk.getEncoded(), Util.PUBLIC, false);
+			clients[client].send(sk.getEncoded(), Util.SECRET, false);
 		else {
 			String msg = new String(Util.decrypt(input, sk, "AES"));
 			if(!Arrays.equals(Util.decrypt(sign, sk, "AES"), Util.hash(Util.decrypt(input, sk, "AES")))){

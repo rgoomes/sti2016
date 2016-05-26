@@ -7,6 +7,7 @@ import java.util.concurrent.*;
 import javax.crypto.*;
 import java.security.*;
 import javax.crypto.spec.*;
+import java.security.spec.X509EncodedKeySpec;
 
 class ChatClientThread extends Thread{
 	private Socket           socket     = null;
@@ -48,10 +49,13 @@ class ChatClientThread extends Thread{
 				byte[] msg = new byte[bytes];
 				streamIn.read(msg);
 
-				if(type == Util.PUBLIC){
+				if(type == Util.SECRET){
 					readSymKey = true;
 					client.setSymKey(msg);
 					client.symMutex.release();
+				} else if(type == Util.PUBLIC){
+					client.setServerPublicKey(msg);
+					client.pubMutex.release();
 				} else if(readSymKey){
 					// read also hash to compare signatures
 					type = streamIn.readInt();
@@ -97,11 +101,21 @@ public class ChatClient implements Runnable{
 	private ChatClientThread client    = null;
 	private KeyManager keyManager      = null;
 
+	private PublicKey serverPublicKey = null;
 	private PublicKey publicKey = null;
 	private PrivateKey privateKey = null;
 	private SecretKey symKey = null;
 
 	public Semaphore symMutex = new Semaphore(1);
+	public Semaphore pubMutex = new Semaphore(1);
+
+	public void setServerPublicKey(byte[] bytes){
+		try {
+			serverPublicKey = KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(bytes));
+		} catch(Exception e){
+			System.out.println("ChatClient/setServerPublicKey() " + e.getMessage());
+		}
+	}
 
 	public void setSymKey(byte[] encryptedSecret){
 		// decrypt secret key using private key
@@ -114,6 +128,11 @@ public class ChatClient implements Runnable{
 
 	public ChatClient(String serverName, int serverPort){
 		System.out.println("Establishing connection to server...");
+		try {
+			pubMutex.acquire();
+		} catch(Exception e){
+			System.out.println("ChatClient/ChatClient() " + e.getMessage());
+		}
 
 		try {
 			keyManager = new KeyManager(this);
@@ -150,6 +169,8 @@ public class ChatClient implements Runnable{
 
 	public void requestNewKey(){
 		try {
+			pubMutex.acquire();
+
 			// needed to block sending messages with the old key
 			symMutex.acquire();
 			client.readSymKey = false;
@@ -157,10 +178,12 @@ public class ChatClient implements Runnable{
 			// to know when its updating
 			Thread.sleep(1000);
 
-			streamOut.writeInt(Util.PUBLIC);
+			streamOut.writeInt(Util.SECRET);
 			streamOut.writeInt(publicKey.getEncoded().length);
 			streamOut.write(publicKey.getEncoded());
 			streamOut.flush();
+
+			pubMutex.release();
 		} catch (Exception e){
 			System.out.println("ChatClient/requestNewKey() " + e.getMessage());
 		}
