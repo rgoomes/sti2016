@@ -62,17 +62,18 @@ class ChatServerThread extends Thread {
 			? Util.encrypt(msg, getPublicKey(), "RSA")
 			: Util.encrypt(msg, getSecretKey(), "AES");
 
+		byte[] signature = (type == Util.PUBLIC)
+			? Util.encrypt(Util.hash(msg), getPublicKey(), "RSA")
+			: Util.encrypt(Util.hash(msg), getSecretKey(), "AES");
+
 		try {
 			streamOut.writeInt(type);
 			streamOut.writeInt(encrypted_msg.length);
 			streamOut.write(encrypted_msg);
 
-			if(doHash){
-				byte[] signature = Util.encrypt(Util.hash(msg), getSecretKey(), "AES");
-				streamOut.writeInt(type);
-				streamOut.writeInt(signature.length);
-				streamOut.write(signature);
-			}
+			streamOut.writeInt(type);
+			streamOut.writeInt(signature.length);
+			streamOut.write(signature);
 
 			streamOut.flush();
 		} catch(IOException ioexception) {
@@ -143,22 +144,7 @@ public class ChatServer implements Runnable {
 	private Thread thread = null;
 	private int clientCount = 0;
 
-	private PublicKey publicKey = null;
-	private PrivateKey privateKey = null;
-
 	public ChatServer(int port){
-		// generate server's key pair
-		try{
-			KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
-			kpg.initialize(2048);
-			KeyPair kp = kpg.generateKeyPair();
-
-			this.publicKey  = kp.getPublic();
-			this.privateKey = kp.getPrivate();
-		} catch(Exception e){
-			System.out.println("ChatClient/ChatClient() " + e.getMessage());
-		}
-
 		try {
 			// Binds to port and starts server
 			System.out.println("Binding to port " + port);

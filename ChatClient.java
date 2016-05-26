@@ -43,24 +43,30 @@ class ChatClientThread extends Thread{
 	public void run(){
 		while(true){
 			try{
-				int type = streamIn.readInt();
-				int bytes = streamIn.readInt();
-				byte[] msg = new byte[bytes];
+				int msg_type = streamIn.readInt();
+				int msg_bytes = streamIn.readInt();
+				byte[] msg = new byte[msg_bytes];
 				streamIn.read(msg);
 
-				if(type == Util.PUBLIC){
-					readSymKey = true;
-					client.setSymKey(msg);
-					client.symMutex.release();
-				} else if(readSymKey){
-					// read also hash to compare signatures
-					type = streamIn.readInt();
-					bytes = streamIn.readInt();
-					byte[] signature = new byte[bytes];
-					streamIn.read(signature);
+				int signature_type = streamIn.readInt();
+				int signature_bytes = streamIn.readInt();
+				byte[] signature = new byte[signature_bytes];
+				streamIn.read(signature);
 
+				if(msg_type == Util.PUBLIC){
+					if(Arrays.equals(
+						Util.hash(Util.decrypt(msg, client.getPrivateKey(), "RSA")),
+						Util.decrypt(signature, client.getPrivateKey(), "RSA"))){
+
+						readSymKey = true;
+						client.setSymKey(msg);
+						client.symMutex.release();
+					} else
+						System.out.println("error: hash not equal");
+
+				} else if(readSymKey)
 					client.handle(Util.decrypt(msg, client.getSymKey(), "AES"), signature);
-				}
+
 			} catch(IOException ioe) {
 				System.out.println("Listening error: " + ioe.getMessage());
 				client.stop();
@@ -110,6 +116,10 @@ public class ChatClient implements Runnable{
 
 	public SecretKey getSymKey(){
 		return symKey;
+	}
+
+	public PrivateKey getPrivateKey(){
+		return privateKey;
 	}
 
 	public ChatClient(String serverName, int serverPort){
