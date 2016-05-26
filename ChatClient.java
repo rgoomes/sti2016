@@ -105,7 +105,7 @@ public class ChatClient implements Runnable{
 
 	public void setSymKey(byte[] encryptedSecret){
 		// decrypt secret key using private key
-		symKey = new SecretKeySpec(Util.decrypt(encryptedSecret, privateKey, "RSA/ECB/PKCS1Padding"), "AES");
+		symKey = new SecretKeySpec(Util.decrypt(encryptedSecret, privateKey, "RSA"), "AES");
 	}
 
 	public SecretKey getSymKey(){
@@ -180,15 +180,12 @@ public class ChatClient implements Runnable{
 
 					byte[] bytes = tmp.getBytes();
 					byte[] msg = Util.encrypt(bytes, symKey, "AES");
+					byte[] signature = Util.encrypt(Util.hash(bytes), symKey, "AES");
 
-					if(tmp.length() > 0 && msg.length > 0){
+					if(tmp.length() > 0 && msg.length > 0 && signature.length > 0){
 						streamOut.writeInt(Util.NORMAL);
 						streamOut.writeInt(msg.length);
 						streamOut.write(msg);
-						streamOut.flush();
-
-						// send hash for integrity checking and authenticity
-						byte[] signature = Util.encrypt(Util.hash(bytes), symKey, "AES");
 
 						streamOut.writeInt(Util.NORMAL);
 						streamOut.writeInt(signature.length);

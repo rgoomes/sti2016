@@ -57,11 +57,23 @@ class ChatServerThread extends Thread {
 	}
 
 	// Sends message to client
-	public void send(byte[] msg, int type){
+	public void send(byte[] msg, int type, Boolean doHash){
+		byte[] encrypted_msg = (type == Util.PUBLIC)
+			? Util.encrypt(msg, getPublicKey(), "RSA")
+			: Util.encrypt(msg, getSecretKey(), "AES");
+
 		try {
 			streamOut.writeInt(type);
-			streamOut.writeInt(msg.length);
-			streamOut.write(msg);
+			streamOut.writeInt(encrypted_msg.length);
+			streamOut.write(encrypted_msg);
+
+			if(doHash){
+				byte[] signature = Util.encrypt(Util.hash(msg), getSecretKey(), "AES");
+				streamOut.writeInt(type);
+				streamOut.writeInt(signature.length);
+				streamOut.write(signature);
+			}
+
 			streamOut.flush();
 		} catch(IOException ioexception) {
 			System.out.println(ID + " ERROR sending message: " + ioexception.getMessage());
@@ -131,7 +143,22 @@ public class ChatServer implements Runnable {
 	private Thread thread = null;
 	private int clientCount = 0;
 
+	private PublicKey publicKey = null;
+	private PrivateKey privateKey = null;
+
 	public ChatServer(int port){
+		// generate server's key pair
+		try{
+			KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
+			kpg.initialize(2048);
+			KeyPair kp = kpg.generateKeyPair();
+
+			this.publicKey  = kp.getPublic();
+			this.privateKey = kp.getPrivate();
+		} catch(Exception e){
+			System.out.println("ChatClient/ChatClient() " + e.getMessage());
+		}
+
 		try {
 			// Binds to port and starts server
 			System.out.println("Binding to port " + port);
@@ -183,15 +210,13 @@ public class ChatServer implements Runnable {
 
 	public synchronized void handle(int ID, byte[] input, byte[] sign, Boolean isHandshake){
 		int client = findClient(ID);
-		PublicKey pk = clients[client].getPublicKey();
 		SecretKey sk = clients[client].getSecretKey();
-		String msg = new String(Util.decrypt(input, sk, "AES"));
 
-		if(isHandshake == true){
+		if(isHandshake == true)
 			// send secret key encrypted with client's public key to the client
-			clients[client].send(Util.encrypt(sk.getEncoded(), pk, "RSA/ECB/PKCS1Padding"), Util.PUBLIC);
-		} else {
-
+			clients[client].send(sk.getEncoded(), Util.PUBLIC, false);
+		else {
+			String msg = new String(Util.decrypt(input, sk, "AES"));
 			if(!Arrays.equals(Util.decrypt(sign, sk, "AES"), Util.hash(Util.decrypt(input, sk, "AES")))){
 				System.out.println("error: hash not equal");
 				return;
@@ -199,29 +224,22 @@ public class ChatServer implements Runnable {
 
 			if(msg.equals(".quit")){
 				// Client exits
-				byte[] quit_msg = ".quit".getBytes();
-				clients[client].send(Util.encrypt(quit_msg, sk, "AES"), Util.NORMAL);
-				clients[client].send(Util.encrypt(Util.hash(quit_msg), sk, "AES"), Util.NORMAL);
+				clients[client].send(".quit".getBytes(), Util.NORMAL, true);
 
 				// Notify remaing users
 				byte[] exit_msg = ("Client " + ID + " exits..").getBytes();
 
-				for(int i = 0; i < clientCount; i++){
-					if(i != client){
-						clients[i].send(Util.encrypt(exit_msg, clients[i].getSecretKey(), "AES"), Util.NORMAL);
-						clients[i].send(Util.encrypt(Util.hash(exit_msg), clients[i].getSecretKey(), "AES"), Util.NORMAL);
-					}
-				}
+				for(int i = 0; i < clientCount; i++)
+					if(i != client)
+						clients[i].send(exit_msg, Util.NORMAL, true);
 
 				remove(ID);
 			} else {
 				// Brodcast message for every client online
 				byte[] new_msg = (ID + ": " + msg).getBytes();
 
-				for(int i = 0; i < clientCount; i++){
-					clients[i].send(Util.encrypt(new_msg, clients[i].getSecretKey(), "AES"), Util.NORMAL);
-					clients[i].send(Util.encrypt(Util.hash(new_msg), clients[i].getSecretKey(), "AES"), Util.NORMAL);
-				}
+				for(int i = 0; i < clientCount; i++)
+					clients[i].send(new_msg, Util.NORMAL, true);
 			}
 		}
 	}
