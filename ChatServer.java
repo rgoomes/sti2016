@@ -57,19 +57,30 @@ class ChatServerThread extends Thread {
 	}
 
 	// Sends message to client
-	public void send(byte[] msg, int type, Boolean doHash){
-		byte[] encrypted_msg = (type == Util.PUBLIC)
-			? Util.encrypt(msg, getPublicKey(), "RSA")
-			: Util.encrypt(msg, getSecretKey(), "AES");
+	public void send(byte[] msg, int type){
+		byte[] encrypted_msg = (type == Util.SECRET)
+			? Util.encrypt(msg, getPublicKey(), "RSA") : ((type == Util.NORMAL)
+			? Util.encrypt(msg, getSecretKey(), "AES") : msg /* type == Uti.SECRET */);
 
-		byte[] signature = (type == Util.PUBLIC)
-			? Util.encrypt(Util.hash(msg), getPublicKey(), "RSA")
-			: Util.encrypt(Util.hash(msg), getSecretKey(), "AES");
+		byte[] msg_hash = (type == Util.SECRET)
+			? Util.encrypt(Util.hash(msg), getPublicKey(), "RSA") : ((type == Util.NORMAL)
+			? Util.encrypt(Util.hash(msg), getSecretKey(), "AES") : msg /* type == Uti.SECRET */);
+
+		byte[] signature = (type == Util.NORMAL)
+			? Util.sign(msg, server.getPrivateKey())
+			: msg;
+
+		if(msg_hash.length <= 0 || encrypted_msg.length <= 0)
+			return;
 
 		try {
 			streamOut.writeInt(type);
 			streamOut.writeInt(encrypted_msg.length);
 			streamOut.write(encrypted_msg);
+
+			streamOut.writeInt(type);
+			streamOut.writeInt(msg_hash.length);
+			streamOut.write(msg_hash);
 
 			streamOut.writeInt(type);
 			streamOut.writeInt(signature.length);
@@ -93,6 +104,8 @@ class ChatServerThread extends Thread {
 		System.out.println("Server Thread " + ID + " running.");
 		Boolean readPublicKey = false;
 
+		this.send(server.getPublicKey().getEncoded(), Util.PUBLIC);
+
 		while(true){
 			try {
 				int type = streamIn.readInt();
@@ -100,18 +113,22 @@ class ChatServerThread extends Thread {
 				byte[] msg = new byte[bytes];
 				streamIn.read(msg);
 
-				if(type == Util.PUBLIC){
+				if(type == Util.SECRET){
 					readPublicKey = true;
 					this.setPublicKey(msg);
-					server.handle(ID, new byte[0], new byte[0], true);
+					server.handle(ID, new byte[0], new byte[0], new byte[0], true);
 				} else if(readPublicKey){
-					// read also hash to compare signatures
+					type = streamIn.readInt();
+					bytes = streamIn.readInt();
+					byte[] msg_hash = new byte[bytes];
+					streamIn.read(msg_hash);
+
 					type = streamIn.readInt();
 					bytes = streamIn.readInt();
 					byte[] signature = new byte[bytes];
 					streamIn.read(signature);
 
-					server.handle(ID, msg, signature, false);
+					server.handle(ID, msg, msg_hash, signature, false);
 				}
 			} catch(IOException ioe) {
 				System.out.println(ID + " ERROR reading: " + ioe.getMessage());
@@ -144,7 +161,30 @@ public class ChatServer implements Runnable {
 	private Thread thread = null;
 	private int clientCount = 0;
 
+	private PublicKey publicKey = null;
+	private PrivateKey privateKey = null;
+
+	public PublicKey getPublicKey(){
+		return publicKey;
+	}
+
+	public PrivateKey getPrivateKey(){
+		return privateKey;
+	}
+
 	public ChatServer(int port){
+		// generate server's key pair
+		try{
+			KeyPairGenerator kpg = KeyPairGenerator.getInstance("RSA");
+			kpg.initialize(4096);
+			KeyPair kp = kpg.generateKeyPair();
+
+			this.publicKey  = kp.getPublic();
+			this.privateKey = kp.getPrivate();
+		} catch(Exception e){
+			System.out.println("ChatClient/ChatClient() " + e.getMessage());
+		}
+
 		try {
 			// Binds to port and starts server
 			System.out.println("Binding to port " + port);
@@ -194,38 +234,45 @@ public class ChatServer implements Runnable {
 		return -1;
 	}
 
-	public synchronized void handle(int ID, byte[] input, byte[] sign, Boolean isHandshake){
+	public synchronized void handle(int ID, byte[] input, byte[] msg_hash, byte[] signature, Boolean isHandshake){
 		int client = findClient(ID);
 		SecretKey sk = clients[client].getSecretKey();
 
 		if(isHandshake == true)
 			// send secret key encrypted with client's public key to the client
-			clients[client].send(sk.getEncoded(), Util.PUBLIC, false);
+			clients[client].send(sk.getEncoded(), Util.SECRET);
 		else {
-			String msg = new String(Util.decrypt(input, sk, "AES"));
-			if(!Arrays.equals(Util.decrypt(sign, sk, "AES"), Util.hash(Util.decrypt(input, sk, "AES")))){
+			byte[] msg = Util.decrypt(input, sk, "AES");
+			String string_msg = new String(msg);
+
+			if(!Arrays.equals(Util.decrypt(msg_hash, sk, "AES"), Util.hash(msg))){
 				System.out.println("error: hash not equal");
 				return;
 			}
 
-			if(msg.equals(".quit")){
+			if(!Util.verify(msg, signature, clients[client].getPublicKey())){
+				System.out.println("error: signature not good");
+				return;
+			}
+
+			if(string_msg.equals(".quit")){
 				// Client exits
-				clients[client].send(".quit".getBytes(), Util.NORMAL, true);
+				clients[client].send(".quit".getBytes(), Util.NORMAL);
 
 				// Notify remaing users
 				byte[] exit_msg = ("Client " + ID + " exits..").getBytes();
 
 				for(int i = 0; i < clientCount; i++)
 					if(i != client)
-						clients[i].send(exit_msg, Util.NORMAL, true);
+						clients[i].send(exit_msg, Util.NORMAL);
 
 				remove(ID);
 			} else {
 				// Brodcast message for every client online
-				byte[] new_msg = (ID + ": " + msg).getBytes();
+				byte[] new_msg = (ID + ": " + string_msg).getBytes();
 
 				for(int i = 0; i < clientCount; i++)
-					clients[i].send(new_msg, Util.NORMAL, true);
+					clients[i].send(new_msg, Util.NORMAL);
 			}
 		}
 	}

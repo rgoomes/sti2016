@@ -2,8 +2,9 @@ import javax.crypto.*;
 import java.security.*;
 
 class Util {
-	static int PUBLIC = 0;
+	static int SECRET = 0;
 	static int NORMAL = 1;
+	static int PUBLIC = 2;
 
 	public static byte[] encrypt(byte[] msg, Key key, String algorithm){
 		try {
@@ -29,7 +30,7 @@ class Util {
 		return new byte[0];
 	}
 
-	public static byte[] hash(byte[] msg) {
+	public static byte[] hash(byte[] msg){
 		try {
 			MessageDigest md = MessageDigest.getInstance("SHA-1");
 			return md.digest(msg);
@@ -40,8 +41,34 @@ class Util {
 		return new byte[0];
 	}
 
+	public static byte[] sign(byte[] msg, PrivateKey privateKey){
+		try {
+			Signature sn = Signature.getInstance("SHA1withRSA");
+			sn.initSign(privateKey);
+			sn.update(msg);
+			return sn.sign();
+		} catch (Exception e) {
+			System.out.println("sign() " + e.getMessage());
+		}
+
+		return new byte[0];
+	}
+
+	public static Boolean verify(byte[] msg, byte[] signature, PublicKey publicKey){
+		try {
+			Signature sn = Signature.getInstance("SHA1withRSA");
+			sn.initVerify(publicKey);
+			sn.update(msg);
+			return sn.verify(signature);
+		} catch (Exception e) {
+			System.out.println("verify() " + e.getMessage());
+		}
+
+		return false;
+	}
+
 	// for print purposes
-	public static String byteArrayToHexString(byte[] b) {
+	public static String byteArrayToHexString(byte[] b){
 		String result = "";
 
 		for(int i = 0; i < b.length; i++)

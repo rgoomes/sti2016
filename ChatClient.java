@@ -7,12 +7,15 @@ import java.util.concurrent.*;
 import javax.crypto.*;
 import java.security.*;
 import javax.crypto.spec.*;
+import java.security.spec.X509EncodedKeySpec;
 
 class ChatClientThread extends Thread{
 	private Socket           socket     = null;
 	private ChatClient       client     = null;
 	private DataInputStream  streamIn   = null;
+
 	public  Boolean          readSymKey = false;
+	public  Boolean          readPubKey = false;
 
 	public ChatClientThread(ChatClient _client, Socket _socket){
 		client = _client;
@@ -48,15 +51,20 @@ class ChatClientThread extends Thread{
 				byte[] msg = new byte[msg_bytes];
 				streamIn.read(msg);
 
+				int hash_type = streamIn.readInt();
+				int hash_bytes = streamIn.readInt();
+				byte[] msg_hash = new byte[hash_bytes];
+				streamIn.read(msg_hash);
+
 				int signature_type = streamIn.readInt();
 				int signature_bytes = streamIn.readInt();
 				byte[] signature = new byte[signature_bytes];
 				streamIn.read(signature);
 
-				if(msg_type == Util.PUBLIC){
+				if(msg_type == Util.SECRET){
 					if(Arrays.equals(
 						Util.hash(Util.decrypt(msg, client.getPrivateKey(), "RSA")),
-						Util.decrypt(signature, client.getPrivateKey(), "RSA"))){
+						Util.decrypt(msg_hash, client.getPrivateKey(), "RSA"))){
 
 						readSymKey = true;
 						client.setSymKey(msg);
@@ -64,8 +72,11 @@ class ChatClientThread extends Thread{
 					} else
 						System.out.println("error: hash not equal");
 
-				} else if(readSymKey)
-					client.handle(Util.decrypt(msg, client.getSymKey(), "AES"), signature);
+				} else if(msg_type == Util.PUBLIC){
+					readPubKey = true;
+					client.setServerPublic(msg);
+				} else if(readSymKey && readPubKey)
+					client.handle(Util.decrypt(msg, client.getSymKey(), "AES"), msg_hash, signature);
 
 			} catch(IOException ioe) {
 				System.out.println("Listening error: " + ioe.getMessage());
@@ -106,8 +117,21 @@ public class ChatClient implements Runnable{
 	private PublicKey publicKey = null;
 	private PrivateKey privateKey = null;
 	private SecretKey symKey = null;
+	private PublicKey serverPublic = null;
 
 	public Semaphore symMutex = new Semaphore(1);
+
+	public PublicKey getServerPublic(){
+		return serverPublic;
+	}
+
+	public void setServerPublic(byte[] bytes){
+		try {
+			serverPublic = KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(bytes));
+		} catch(Exception e){
+			System.out.println("ChatClient/setServerPublicKey() " + e.getMessage());
+		}
+	}
 
 	public void setSymKey(byte[] encryptedSecret){
 		// decrypt secret key using private key
@@ -167,7 +191,7 @@ public class ChatClient implements Runnable{
 			// to know when its updating
 			Thread.sleep(1000);
 
-			streamOut.writeInt(Util.PUBLIC);
+			streamOut.writeInt(Util.SECRET);
 			streamOut.writeInt(publicKey.getEncoded().length);
 			streamOut.write(publicKey.getEncoded());
 			streamOut.flush();
@@ -190,12 +214,18 @@ public class ChatClient implements Runnable{
 
 					byte[] bytes = tmp.getBytes();
 					byte[] msg = Util.encrypt(bytes, symKey, "AES");
-					byte[] signature = Util.encrypt(Util.hash(bytes), symKey, "AES");
+					byte[] msg_hash = Util.encrypt(Util.hash(bytes), symKey, "AES");
+					byte[] signature = Util.sign(bytes, getPrivateKey());
 
-					if(tmp.length() > 0 && msg.length > 0 && signature.length > 0){
+					if(tmp.length() > 0 && msg.length > 0 && msg_hash.length > 0 && signature.length > 0){
+
 						streamOut.writeInt(Util.NORMAL);
 						streamOut.writeInt(msg.length);
 						streamOut.write(msg);
+
+						streamOut.writeInt(Util.NORMAL);
+						streamOut.writeInt(msg_hash.length);
+						streamOut.write(msg_hash);
 
 						streamOut.writeInt(Util.NORMAL);
 						streamOut.writeInt(signature.length);
@@ -214,9 +244,14 @@ public class ChatClient implements Runnable{
 		}
 	}
 
-	public void handle(byte[] msg, byte[] sign){
-		if(!Arrays.equals(Util.hash(msg), Util.decrypt(sign, symKey, "AES"))){
+	public void handle(byte[] msg, byte[] msg_hash, byte[] signature){
+		if(!Arrays.equals(Util.hash(msg), Util.decrypt(msg_hash, symKey, "AES"))){
 			System.out.println("error: hash not equal");
+			return;
+		}
+
+		if(!Util.verify(msg, signature, getServerPublic())){
+			System.out.println("error: signature not good");
 			return;
 		}
 
