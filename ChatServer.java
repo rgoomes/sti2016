@@ -60,17 +60,16 @@ class ChatServerThread extends Thread {
 	public void send(byte[] msg, int type){
 		byte[] encrypted_msg = (type == Util.SECRET)
 			? Util.encrypt(msg, getPublicKey(), "RSA") : ((type == Util.NORMAL)
-			? Util.encrypt(msg, getSecretKey(), "AES") : msg /* type == Uti.SECRET */);
+			? Util.encrypt(msg, getSecretKey(), "AES") : msg /* type == Util.PUBLIC */);
 
-		byte[] msg_hash = (type == Util.SECRET)
-			? Util.encrypt(Util.hash(msg), getPublicKey(), "RSA") : ((type == Util.NORMAL)
-			? Util.encrypt(Util.hash(msg), getSecretKey(), "AES") : msg /* type == Uti.SECRET */);
+		byte[] msg_hash = (type == Util.SECRET || type == Util.NORMAL)
+			? Util.hash(msg) : msg /* type == Util.PUBLIC */;
 
 		byte[] signature = (type == Util.NORMAL)
 			? Util.sign(msg, server.getPrivateKey())
-			: msg;
+			: msg /* type == Util.SECRET/PUBLIC */;
 
-		if(msg_hash.length <= 0 || encrypted_msg.length <= 0)
+		if(msg_hash.length <= 0 || encrypted_msg.length <= 0 || signature.length <= 0)
 			return;
 
 		try {
@@ -104,6 +103,7 @@ class ChatServerThread extends Thread {
 		System.out.println("Server Thread " + ID + " running.");
 		Boolean readPublicKey = false;
 
+		// TODO: fix replay attack
 		this.send(server.getPublicKey().getEncoded(), Util.PUBLIC);
 
 		while(true){
@@ -114,8 +114,8 @@ class ChatServerThread extends Thread {
 				streamIn.read(msg);
 
 				if(type == Util.SECRET){
+					this.setPublicKey(readPublicKey ? Util.decrypt(msg, getSecretKey(), "AES") : msg);
 					readPublicKey = true;
-					this.setPublicKey(msg);
 					server.handle(ID, new byte[0], new byte[0], new byte[0], true);
 				} else if(readPublicKey){
 					type = streamIn.readInt();
@@ -245,7 +245,7 @@ public class ChatServer implements Runnable {
 			byte[] msg = Util.decrypt(input, sk, "AES");
 			String string_msg = new String(msg);
 
-			if(!Arrays.equals(Util.decrypt(msg_hash, sk, "AES"), Util.hash(msg))){
+			if(!Arrays.equals(msg_hash, Util.hash(msg))){
 				System.out.println("error: hash not equal");
 				return;
 			}

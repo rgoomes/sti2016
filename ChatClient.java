@@ -63,8 +63,7 @@ class ChatClientThread extends Thread{
 
 				if(msg_type == Util.SECRET){
 					if(Arrays.equals(
-						Util.hash(Util.decrypt(msg, client.getPrivateKey(), "RSA")),
-						Util.decrypt(msg_hash, client.getPrivateKey(), "RSA"))){
+						Util.hash(Util.decrypt(msg, client.getPrivateKey(), "RSA")), msg_hash)){
 
 						readSymKey = true;
 						client.setSymKey(msg);
@@ -184,6 +183,8 @@ public class ChatClient implements Runnable{
 
 	public void requestNewKey(){
 		try {
+			Boolean hadSecret = client.readSymKey;
+
 			// needed to block sending messages with the old key
 			symMutex.acquire();
 			client.readSymKey = false;
@@ -191,9 +192,15 @@ public class ChatClient implements Runnable{
 			// to know when its updating
 			Thread.sleep(1000);
 
+			byte[] key_msg = publicKey.getEncoded();
+			if(hadSecret)
+				key_msg = Util.encrypt(key_msg, getSymKey(), "AES");
+			else;
+				// TODO: fix replay attack
+
 			streamOut.writeInt(Util.SECRET);
-			streamOut.writeInt(publicKey.getEncoded().length);
-			streamOut.write(publicKey.getEncoded());
+			streamOut.writeInt(key_msg.length);
+			streamOut.write(key_msg);
 			streamOut.flush();
 		} catch (Exception e){
 			System.out.println("ChatClient/requestNewKey() " + e.getMessage());
@@ -213,12 +220,11 @@ public class ChatClient implements Runnable{
 					symMutex.acquire();
 
 					byte[] bytes = tmp.getBytes();
-					byte[] msg = Util.encrypt(bytes, symKey, "AES");
-					byte[] msg_hash = Util.encrypt(Util.hash(bytes), symKey, "AES");
+					byte[] msg = Util.encrypt(bytes, getSymKey(), "AES");
+					byte[] msg_hash = Util.hash(bytes);
 					byte[] signature = Util.sign(bytes, getPrivateKey());
 
 					if(tmp.length() > 0 && msg.length > 0 && msg_hash.length > 0 && signature.length > 0){
-
 						streamOut.writeInt(Util.NORMAL);
 						streamOut.writeInt(msg.length);
 						streamOut.write(msg);
@@ -245,7 +251,7 @@ public class ChatClient implements Runnable{
 	}
 
 	public void handle(byte[] msg, byte[] msg_hash, byte[] signature){
-		if(!Arrays.equals(Util.hash(msg), Util.decrypt(msg_hash, symKey, "AES"))){
+		if(!Arrays.equals(Util.hash(msg), msg_hash)){
 			System.out.println("error: hash not equal");
 			return;
 		}
